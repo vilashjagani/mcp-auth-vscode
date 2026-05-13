@@ -1,0 +1,18 @@
+# source — not needed at runtime
+src/**
+tsconfig.json
+esbuild.js
+
+# IDE / tool state
+.claude/**
+
+# dev tooling
+node_modules/**
+.vscode-test/**
+.github/**
+out/**/*.map
+
+# repo artefacts
+.gitignore
+CONFIGURATION.md
+*.vsix

@@ -1,0 +1,153 @@
+{
+  "name": "mcp-auth",
+  "displayName": "MCP Server Authentication",
+  "description": "OAuth 2.0 Device Authorization Flow (RFC 8628) for MCP servers — injects Bearer tokens into VS Code MCP config automatically.",
+  "version": "0.1.0",
+  "publisher": "mcp-community",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mcp-community/mcp-auth-vscode"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "icon": "media/icon.png",
+  "preview": true,
+  "categories": ["AI", "Other"],
+  "keywords": ["mcp", "oauth", "device-auth", "authentication", "llm", "ai", "model-context-protocol"],
+  "galleryBanner": {
+    "color": "#0f172a",
+    "theme": "dark"
+  },
+  "activationEvents": ["onStartupFinished"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "mcpAuthLensContainer",
+          "title": "MCP Server Lens",
+          "icon": "media/lens.svg"
+        }
+      ]
+    },
+    "views": {
+      "mcpAuthLensContainer": [
+        {
+          "type": "webview",
+          "id": "mcpAuthLens",
+          "name": "MCP Servers",
+          "icon": "media/lens.svg",
+          "contextualTitle": "MCP Server Lens"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "mcpAuth.authenticate",
+        "title": "MCP Auth: Sign In"
+      },
+      {
+        "command": "mcpAuth.logout",
+        "title": "MCP Auth: Sign Out"
+      },
+      {
+        "command": "mcpAuth.showStatus",
+        "title": "MCP Auth: Show Auth Status"
+      },
+      {
+        "command": "mcpAuth.refreshLens",
+        "title": "MCP Auth: Refresh Lens",
+        "icon": "$(refresh)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "mcpAuth.refreshLens",
+          "when": "view == mcpAuthLens",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "MCP Server Authentication",
+      "properties": {
+        "mcpAuth.clientId": {
+          "type": "string",
+          "default": "",
+          "description": "OAuth 2.0 Client ID registered for Device Authorization Grant"
+        },
+        "mcpAuth.deviceAuthEndpoint": {
+          "type": "string",
+          "default": "",
+          "description": "Device Authorization Endpoint URL (e.g. https://idp.example.com/as/device_authz.oauth2)"
+        },
+        "mcpAuth.tokenEndpoint": {
+          "type": "string",
+          "default": "",
+          "description": "Token Endpoint URL (e.g. https://idp.example.com/as/token.oauth2)"
+        },
+        "mcpAuth.scopes": {
+          "type": "string",
+          "default": "openid profile email",
+          "description": "Space-separated OAuth 2.0 scopes to request"
+        },
+        "mcpAuth.mcpServers": {
+          "type": "array",
+          "default": [],
+          "description": "List of MCP servers to authenticate. Each entry needs a name (key under mcp.servers) and url. Takes precedence over the legacy mcpServerName/mcpServerUrl settings.",
+          "items": {
+            "type": "object",
+            "required": ["name", "url"],
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Key under mcp.servers (e.g. my-mcp-server)"
+              },
+              "url": {
+                "type": "string",
+                "description": "MCP server base URL"
+              }
+            }
+          }
+        },
+        "mcpAuth.mcpServerName": {
+          "type": "string",
+          "default": "mcp-server",
+          "description": "Legacy: key name for this server under mcp.servers. Use mcpAuth.mcpServers for multiple servers."
+        },
+        "mcpAuth.mcpServerUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Legacy: MCP server base URL. Use mcpAuth.mcpServers for multiple servers."
+        },
+        "mcpAuth.tokenRefreshBuffer": {
+          "type": "number",
+          "default": 60,
+          "description": "Seconds before token expiry to proactively refresh"
+        },
+        "mcpAuth.allowInsecureTls": {
+          "type": "boolean",
+          "default": false,
+          "description": "Skip TLS certificate verification. Use only when a corporate proxy presents a self-signed certificate."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "node esbuild.js --production",
+    "compile": "tsc --noEmit",
+    "build": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^2.24.0",
+    "esbuild": "^0.20.0",
+    "typescript": "^5.3.0"
+  }
+}
