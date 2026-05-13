@@ -7,7 +7,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/mcp-community/mcp-auth-vscode"
+    "url": "https://github.com/vilashjagani/mcp-auth-vscode"
   },
   "engines": {
     "vscode": "^1.85.0"
