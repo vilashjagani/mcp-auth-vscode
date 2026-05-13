@@ -16,3 +16,6 @@ out/**/*.map
 .gitignore
 CONFIGURATION.md
 *.vsix
+
+# large media — hosted on GitHub, not bundled in the vsix
+media/*.gif

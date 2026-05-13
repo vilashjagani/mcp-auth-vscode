@@ -4,6 +4,8 @@ A VS Code extension that authenticates against any OAuth 2.0 IDP using the **Dev
 
 The **MCP Server Lens** sidebar panel shows all configured MCP servers, lets you connect to them, and lists every tool each server exposes.
 
+![MCP Server Authentication demo](https://raw.githubusercontent.com/vilashjagani/mcp-auth-vscode/main/media/mcp-auth.gif)
+
 ---
 
 ## Requirements
