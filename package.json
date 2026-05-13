@@ -3,7 +3,7 @@
   "displayName": "MCP Server Authentication",
   "description": "OAuth 2.0 Device Authorization Flow (RFC 8628) for MCP servers — injects Bearer tokens into VS Code MCP config automatically.",
   "version": "0.1.0",
-  "publisher": "mcp-community",
+  "publisher": "VilashJagani",
   "license": "MIT",
   "repository": {
     "type": "git",
