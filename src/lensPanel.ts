@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import { readAllMcpSources, McpSource, McpServerEntry, ensureMcpJsonExists } from "./mcpConfig";
-import { TokenStorage } from "./tokenStorage";
-import { getConfig, getEffectiveServers } from "./config";
+import { ServerAuthStorage } from "./serverAuthStorage";
+import { ServerAuthState } from "./authTypes";
 import { ServerStateManager } from "./serverStateManager";
 import { getLogger } from "./logger";
 
@@ -10,11 +10,12 @@ export class LensPanel implements vscode.WebviewViewProvider {
 
   private view?: vscode.WebviewView;
   private refreshTimer?: ReturnType<typeof setInterval>;
-  private _cachedTokens: { expiresAt: number; accessToken?: string; tokenType?: string } | null = null;
+  /** serverName → auth state (null = not signed in) */
+  private _authStates: Record<string, ServerAuthState | null> = {};
 
   constructor(
     private readonly extensionUri: vscode.Uri,
-    private readonly storage: TokenStorage,
+    private readonly storage: ServerAuthStorage,
     private readonly serverState: ServerStateManager
   ) {
     serverState.onStateChange(() => this.render());
@@ -76,18 +77,18 @@ export class LensPanel implements vscode.WebviewViewProvider {
             }
 
             case "signIn":
-              await vscode.commands.executeCommand("mcpAuth.authenticate");
+              await vscode.commands.executeCommand("mcpAuth.authenticate", msg.payload);
               break;
 
             case "signOut":
-              getLogger().info("Lens: Sign Out requested");
-              await vscode.commands.executeCommand("mcpAuth.logout");
+              getLogger().info(`Lens: Sign Out requested [${msg.payload ?? "all"}]`);
+              await vscode.commands.executeCommand("mcpAuth.logout", msg.payload);
               break;
 
             case "serverConnect": {
-              const d = JSON.parse(msg.payload ?? "{}") as { key: string; entry: McpServerEntry };
+              const d = JSON.parse(msg.payload ?? "{}") as { key: string; serverName: string; entry: McpServerEntry };
               getLogger().info(`Lens: ▶ Start  [${d.key}]`);
-              await this.serverState.connect(d.key, d.entry, this.authHeaders());
+              await this.serverState.connect(d.key, d.entry, this.authHeadersForServer(d.serverName));
               break;
             }
 
@@ -99,10 +100,10 @@ export class LensPanel implements vscode.WebviewViewProvider {
             }
 
             case "serverRefresh": {
-              const d = JSON.parse(msg.payload ?? "{}") as { key: string; entry: McpServerEntry };
+              const d = JSON.parse(msg.payload ?? "{}") as { key: string; serverName: string; entry: McpServerEntry };
               getLogger().info(`Lens: ⟳ Refresh [${d.key}]`);
               this.serverState.reset(d.key);
-              await this.serverState.connect(d.key, d.entry, this.authHeaders());
+              await this.serverState.connect(d.key, d.entry, this.authHeadersForServer(d.serverName));
               break;
             }
 
@@ -123,14 +124,22 @@ export class LensPanel implements vscode.WebviewViewProvider {
 
   refresh(): void { this.render(); }
 
-  setTokenState(tokens: { expiresAt: number; accessToken?: string; tokenType?: string } | null): void {
-    this._cachedTokens = tokens;
+  refreshAuthStates(states: Record<string, ServerAuthState | null>): void {
+    this._authStates = states;
     this.render();
   }
 
-  private authHeaders(): Record<string, string> {
-    if (!this._cachedTokens?.accessToken) return {};
-    return { Authorization: `${this._cachedTokens.tokenType ?? "Bearer"} ${this._cachedTokens.accessToken}` };
+  private authHeadersForServer(serverName: string): Record<string, string> {
+    const state = this._authStates[serverName];
+    if (!state?.accessToken) return {};
+    if (state.method === "api_key") {
+      const header = state.tokenType ?? "x-api-key";
+      return { [header]: state.accessToken };
+    }
+    if (state.method === "basic") {
+      return { Authorization: `Basic ${state.accessToken}` };
+    }
+    return { Authorization: `${state.tokenType ?? "Bearer"} ${state.accessToken}` };
   }
 
   private render(): void {
@@ -141,34 +150,38 @@ export class LensPanel implements vscode.WebviewViewProvider {
   // ─── HTML ─────────────────────────────────────────────────────────────────
 
   private buildHtml(): string {
-    const sources  = readAllMcpSources();
-    const tokens   = this._cachedTokens;
-    const config   = getConfig();
-    const signedIn = !!tokens;
+    const sources    = readAllMcpSources();
+    const authStates = this._authStates;
+    const anySignedIn = Object.values(authStates).some((s) => s !== null);
 
     // Build the entries lookup table that will live in the webview JS.
-    // Keys → McpServerEntry objects.  No inline JSON in onclick — buttons use data-key only.
-    const entryMap: Record<string, McpServerEntry> = {};
+    // Keys → McpServerEntry objects + serverName.  No inline JSON in onclick.
+    const entryMap: Record<string, { entry: McpServerEntry; serverName: string }> = {};
     for (const src of sources) {
       for (const [name, entry] of Object.entries(src.servers)) {
         const key = serverKey(src, name);
-        entryMap[key] = entry;
+        entryMap[key] = { entry, serverName: name };
       }
     }
     const entriesJson = JSON.stringify(entryMap);
 
-    const authServerNames = new Set(getEffectiveServers(config).map((t) => t.name));
+    // Every server visible in the lens gets Sign In / Sign Out buttons
+    const allServerNames = new Set(
+      sources.flatMap((src) => Object.keys(src.servers))
+    );
 
     const totalServers = sources.reduce((n, s) => n + Object.keys(s.servers).length, 0);
     const sectionsHtml = totalServers > 0
-      ? sources.map((src) => this.renderSource(src, authServerNames, signedIn)).join("")
+      ? sources.map((src) => this.renderSource(src, allServerNames, authStates)).join("")
       : `<div class="empty-state">
            <div class="empty-icon">🔌</div>
            <div class="empty-title">No MCP servers configured</div>
            <div class="empty-sub">Add servers to <code>mcp.servers</code> in VS Code settings or a workspace <code>.vscode/mcp.json</code>.</div>
          </div>`;
 
-    const expiryText = tokens ? this.formatExpiry(tokens.expiresAt) : "";
+    // For the global auth strip: show overall status
+    const firstSignedIn = Object.values(authStates).find((s) => s !== null);
+    const expiryText = firstSignedIn?.expiresAt ? this.formatExpiry(firstSignedIn.expiresAt) : "";
 
     return /* html */`<!DOCTYPE html>
 <html lang="en">
@@ -356,6 +369,20 @@ body {
 .badge-stdio { background: #8b6cef22; color: #b39dff; border: 1px solid #8b6cef55; }
 .badge-sse   { background: #e5953322; color: #f5a623; border: 1px solid #e5953355; }
 .badge-other { background: rgba(255,255,255,.08); color: var(--vscode-descriptionForeground); border: 1px solid rgba(255,255,255,.12); }
+.badge-auth-on  { background: #4ec94e22; color: #4ec94e; border: 1px solid #4ec94e55; }
+.badge-auth-off { background: rgba(255,255,255,.05); color: #888; border: 1px solid rgba(255,255,255,.12); }
+
+/* ── Per-server auth row ── */
+.card-auth-row {
+  display: flex; align-items: center; gap: 5px;
+  padding: 4px 10px;
+  border-bottom: 1px solid rgba(255,255,255,.06);
+  background: rgba(0,0,0,.1);
+}
+.act-auth-signin  { border-color: #F5A62355; color: #F5A623; font-size: 10px; padding: 2px 8px; }
+.act-auth-signin:hover  { background: rgba(245,166,35,.15); border-color: #F5A623; }
+.act-auth-signout { border-color: rgba(255,255,255,.12); color: var(--vscode-descriptionForeground); font-size: 10px; padding: 2px 8px; }
+.act-auth-signout:hover { background: rgba(255,255,255,.08); border-color: rgba(255,255,255,.3); }
 
 /* ── Action buttons row ── */
 .card-actions {
@@ -493,15 +520,15 @@ body {
 
 <!-- ── Auth strip ── -->
 <div class="auth-strip">
-  <div class="auth-dot ${signedIn ? "on" : "off"}"></div>
+  <div class="auth-dot ${anySignedIn ? "on" : "off"}"></div>
   <div class="auth-info">
-    <div class="auth-status ${signedIn ? "signed-in" : "signed-out"}">
-      ${signedIn ? "Signed in" : "Not signed in"}
+    <div class="auth-status ${anySignedIn ? "signed-in" : "signed-out"}">
+      ${anySignedIn ? "Signed in" : "Not signed in"}
     </div>
-    ${signedIn ? `<div class="auth-expiry">${expiryText}</div>` : ""}
+    ${anySignedIn && expiryText ? `<div class="auth-expiry">${expiryText}</div>` : ""}
   </div>
-  ${signedIn
-    ? `<button class="pill-btn pill-signout" data-action="signOut">Sign Out</button>`
+  ${anySignedIn
+    ? `<button class="pill-btn pill-signout" data-action="signOut" title="Sign out (select server or all)">Sign Out</button>`
     : `<button class="pill-btn pill-signin"  data-action="signIn">Sign In</button>`
   }
 </div>
@@ -534,14 +561,24 @@ document.addEventListener('click', function(e) {
     case 'openMcpSettings':    post('openMcpSettings');    break;
     case 'openFile':           post('openFile',    btn.dataset.path); break;
     case 'openMcpFile':        post('openMcpFile', btn.dataset.path); break;
-    case 'serverConnect':
-      post('serverConnect', JSON.stringify({ key: btn.dataset.key, entry: ENTRIES[btn.dataset.key] }));
+    case 'serverConnect': {
+      const rec = ENTRIES[btn.dataset.key];
+      post('serverConnect', JSON.stringify({ key: btn.dataset.key, serverName: rec.serverName, entry: rec.entry }));
       break;
+    }
     case 'serverStop':
       post('serverStop', JSON.stringify({ key: btn.dataset.key }));
       break;
-    case 'serverRefresh':
-      post('serverRefresh', JSON.stringify({ key: btn.dataset.key, entry: ENTRIES[btn.dataset.key] }));
+    case 'serverRefresh': {
+      const rec = ENTRIES[btn.dataset.key];
+      post('serverRefresh', JSON.stringify({ key: btn.dataset.key, serverName: rec.serverName, entry: rec.entry }));
+      break;
+    }
+    case 'serverSignIn':
+      post('signIn', btn.dataset.server);
+      break;
+    case 'serverSignOut':
+      post('signOut', btn.dataset.server);
       break;
     case 'toggleTools': {
       const card = btn.closest('.server-card');
@@ -635,7 +672,7 @@ function esc(s) {
 
   // ─── Source section ───────────────────────────────────────────────────────
 
-  private renderSource(src: McpSource, authServerNames: Set<string>, signedIn: boolean): string {
+  private renderSource(src: McpSource, authServerNames: Set<string>, authStates: Record<string, ServerAuthState | null>): string {
     const keys = Object.keys(src.servers);
     const isGlobal = src.scope === "global";
 
@@ -643,7 +680,6 @@ function esc(s) {
       ? `<span class="scope-chip chip-global">global</span>`
       : `<span class="scope-chip chip-workspace">workspace</span>`;
 
-    // Two configure buttons: VS Code Settings + dedicated mcp.json
     const mcpJsonPath = src.mcpJsonPath;
     const mcpConfigBtn = mcpJsonPath
       ? `<button class="cfg-link mcp" data-action="openMcpFile" data-path="${escAttrVal(mcpJsonPath)}" title="${escAttrVal(mcpJsonPath)}">📄 mcp.json</button>`
@@ -656,7 +692,7 @@ function esc(s) {
 
     const body = keys.length === 0
       ? `<div class="server-list"><div class="card-placeholder" style="padding:10px 12px">No servers configured</div></div>`
-      : `<div class="server-list">${keys.map((n) => this.renderCard(n, src.servers[n]!, src, authServerNames, signedIn)).join("")}</div>`;
+      : `<div class="server-list">${keys.map((n) => this.renderCard(n, src.servers[n]!, src, authServerNames, authStates)).join("")}</div>`;
 
     return `
 <div class="source-section">
@@ -678,13 +714,14 @@ function esc(s) {
     entry: McpServerEntry,
     src: McpSource,
     authServerNames: Set<string>,
-    signedIn: boolean
+    authStates: Record<string, ServerAuthState | null>
   ): string {
-    const key      = serverKey(src, name);
-    const state    = this.serverState.getState(key);
-    const type     = ((entry.type as string | undefined) ?? "http").toLowerCase();
-    const isAuth   = authServerNames.has(name) && signedIn;
-    const status   = state.status;
+    const key        = serverKey(src, name);
+    const state      = this.serverState.getState(key);
+    const type       = ((entry.type as string | undefined) ?? "http").toLowerCase();
+    const serverAuth = authStates[name] ?? null;
+    const isAuth     = authServerNames.has(name) && serverAuth !== null;
+    const status     = state.status;
 
     // card class
     let cardClass = "server-card";
@@ -772,13 +809,29 @@ function esc(s) {
 </div>`;
     }
 
+    // Auth method badge
+    const authMethodLabel: Record<string, string> = { device: "device", client_credentials: "cc", basic: "basic", api_key: "apikey" };
+    const authBadge = authServerNames.has(name)
+      ? (serverAuth
+          ? `<span class="type-badge badge-auth-on" title="Auth method: ${serverAuth.method}">${authMethodLabel[serverAuth.method] ?? serverAuth.method}</span>`
+          : `<span class="type-badge badge-auth-off" title="Not signed in">auth</span>`)
+      : "";
+
+    const serverSignInBtn = authServerNames.has(name)
+      ? (serverAuth
+          ? `<button class="act-btn act-auth-signout" data-action="serverSignOut" data-server="${escAttrVal(name)}" title="Sign out from ${name}">Sign Out</button>`
+          : `<button class="act-btn act-auth-signin"  data-action="serverSignIn"  data-server="${escAttrVal(name)}" title="Sign in to ${name}">Sign In</button>`)
+      : "";
+
     return `
 <div class="${cardClass}">
   <div class="card-top status-${status}">
     <span class="status-dot dot-${status}"></span>
     <span class="card-name">${escHtml(name)}</span>
+    ${authBadge}
     <span class="type-badge ${badgeClass}">${escHtml(type)}</span>
   </div>
+  ${serverSignInBtn ? `<div class="card-auth-row">${serverSignInBtn}</div>` : ""}
   ${body}
 </div>`;
   }

@@ -21,7 +21,8 @@ export async function writeMcpToken(
   serverName: string,
   accessToken: string,
   tokenType: string,
-  mcpServerUrl: string
+  mcpServerUrl: string,
+  authMethod: import("./authTypes").AuthMethod = "device"
 ): Promise<void> {
   const mcpConfig = vscode.workspace.getConfiguration("mcp");
   // Deep-clone — VS Code returns a Proxy; mutating it directly throws an isExtensible trap error
@@ -30,17 +31,28 @@ export async function writeMcpToken(
   );
 
   const existing: McpServerEntry = (servers[serverName] as McpServerEntry) ?? {};
-  const updated: McpServerEntry = {
-    type: "http",          // default transport type
-    ...existing,
-    headers: {
-      ...(existing.headers ?? {}),
-      Authorization: `${tokenType} ${accessToken}`,
-    },
-  };
-  if (mcpServerUrl) {
-    updated.url = mcpServerUrl;
+
+  let headerPatch: Record<string, string>;
+  if (authMethod === "api_key") {
+    // tokenType holds the header name for api_key auth
+    headerPatch = { [tokenType]: accessToken };
+    // Remove any stale Authorization header from previous method
+    const cleaned = { ...(existing.headers ?? {}) };
+    delete cleaned["Authorization"];
+    headerPatch = { ...cleaned, [tokenType]: accessToken };
+  } else if (authMethod === "basic") {
+    headerPatch = { ...(existing.headers ?? {}), Authorization: `Basic ${accessToken}` };
+  } else {
+    // device / client_credentials
+    headerPatch = { ...(existing.headers ?? {}), Authorization: `${tokenType} ${accessToken}` };
   }
+
+  const updated: McpServerEntry = {
+    type: "http",
+    ...existing,
+    headers: headerPatch,
+  };
+  if (mcpServerUrl) updated.url = mcpServerUrl;
   servers[serverName] = updated;
 
   await mcpConfig.update("servers", servers, vscode.ConfigurationTarget.Global);
@@ -193,3 +205,29 @@ function resolveGlobalSettingsPath(): string | null {
   }
   return null;
 }
+
+// ─── Flat server list from all sources (used as the authoritative server list) ──
+
+export interface McpServerInfo {
+  name: string;
+  url: string;
+  entry: McpServerEntry;
+}
+
+/**
+ * Returns all unique MCP servers from every source (global settings.json,
+ * workspace mcp.json, workspace settings.json).  Later sources win on name
+ * collision so workspace-level definitions shadow global ones.
+ */
+export function readAllMcpServers(): McpServerInfo[] {
+  const sources = readAllMcpSources();
+  const map = new Map<string, McpServerInfo>();
+  for (const src of sources) {
+    for (const [name, entry] of Object.entries(src.servers)) {
+      const url = String((entry as McpServerEntry).url ?? "");
+      map.set(name, { name, url, entry: entry as McpServerEntry });
+    }
+  }
+  return [...map.values()];
+}
+

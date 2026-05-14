@@ -1,8 +1,16 @@
 import * as https from "https";
 import * as http from "http";
-import { IdpConfig } from "./config";
 import { TokenSet } from "./tokenStorage";
 import { getLogger } from "./logger";
+
+/** Minimal params needed by device-auth and token-poll functions. */
+export interface DeviceAuthParams {
+  clientId: string;
+  deviceAuthEndpoint: string;
+  tokenEndpoint: string;
+  scopes: string;
+  allowInsecureTls: boolean;
+}
 
 interface DeviceAuthResponse {
   device_code: string;
@@ -115,7 +123,7 @@ function encodeForm(params: Record<string, string>): string {
     .join("&");
 }
 
-export async function startDeviceAuth(config: IdpConfig): Promise<DeviceAuthResponse> {
+export async function startDeviceAuth(config: DeviceAuthParams): Promise<DeviceAuthResponse> {
   getLogger().info(`Starting device auth → ${config.deviceAuthEndpoint}`);
   getLogger().info(`client_id=${config.clientId}  scope=${config.scopes}`);
 
@@ -138,7 +146,7 @@ export async function startDeviceAuth(config: IdpConfig): Promise<DeviceAuthResp
 }
 
 export async function pollForToken(
-  config: IdpConfig,
+  config: DeviceAuthParams,
   deviceCode: string,
   intervalSeconds: number,
   expiresIn: number,
@@ -189,7 +197,7 @@ export async function pollForToken(
 }
 
 export async function refreshAccessToken(
-  config: IdpConfig,
+  config: DeviceAuthParams,
   refreshToken: string
 ): Promise<TokenSet> {
   getLogger().info("Refreshing access token…");

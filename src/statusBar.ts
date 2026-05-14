@@ -23,10 +23,14 @@ export class StatusBarItem {
     this.item.backgroundColor = undefined;
   }
 
-  setSignedIn(expiresAt: number): void {
-    const expiresIn = Math.round((expiresAt - Date.now()) / 60000);
+  setSignedIn(expiresAt: number | undefined): void {
     this.item.text = `$(check) MCP Auth: Signed In`;
-    this.item.tooltip = `Signed in — token expires in ~${expiresIn} min. Click for details.`;
+    if (expiresAt) {
+      const expiresIn = Math.round((expiresAt - Date.now()) / 60000);
+      this.item.tooltip = `Signed in — token expires in ~${expiresIn} min. Click for details.`;
+    } else {
+      this.item.tooltip = `Signed in (static credentials). Click for details.`;
+    }
     this.item.command = "mcpAuth.showStatus";
     this.item.backgroundColor = undefined;
   }

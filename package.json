@@ -1,8 +1,8 @@
 {
   "name": "mcp-auth",
   "displayName": "MCP Server Authentication",
-  "description": "OAuth 2.0 Device Authorization Flow (RFC 8628) for MCP servers — injects Bearer tokens into VS Code MCP config automatically.",
-  "version": "0.1.1",
+  "description": "Multi-method authentication for MCP servers: Device Auth Flow, Client Credentials, Password Grant, Basic Auth, and API Key — per-server config, per-IDP settings, injected into VS Code MCP config automatically.",
+  "version": "0.2.0",
   "publisher": "VilashJagani",
   "license": "MIT",
   "repository": {
@@ -15,7 +15,7 @@
   "icon": "media/icon.png",
   "preview": true,
   "categories": ["AI", "Other"],
-  "keywords": ["mcp", "oauth", "device-auth", "authentication", "llm", "ai", "model-context-protocol"],
+  "keywords": ["mcp", "oauth", "device-auth", "client-credentials", "password-grant", "basic-auth", "api-key", "authentication", "llm", "ai", "model-context-protocol"],
   "galleryBanner": {
     "color": "#0f172a",
     "theme": "dark"
@@ -74,64 +74,59 @@
     "configuration": {
       "title": "MCP Server Authentication",
       "properties": {
-        "mcpAuth.clientId": {
-          "type": "string",
-          "default": "",
-          "description": "OAuth 2.0 Client ID registered for Device Authorization Grant"
-        },
-        "mcpAuth.deviceAuthEndpoint": {
-          "type": "string",
-          "default": "",
-          "description": "Device Authorization Endpoint URL (e.g. https://idp.example.com/as/device_authz.oauth2)"
-        },
-        "mcpAuth.tokenEndpoint": {
-          "type": "string",
-          "default": "",
-          "description": "Token Endpoint URL (e.g. https://idp.example.com/as/token.oauth2)"
-        },
-        "mcpAuth.scopes": {
-          "type": "string",
-          "default": "openid profile email",
-          "description": "Space-separated OAuth 2.0 scopes to request"
-        },
-        "mcpAuth.mcpServers": {
-          "type": "array",
-          "default": [],
-          "description": "List of MCP servers to authenticate. Each entry needs a name (key under mcp.servers) and url. Takes precedence over the legacy mcpServerName/mcpServerUrl settings.",
-          "items": {
+        "mcpAuth.serverConfigs": {
+          "type": "object",
+          "default": {},
+          "description": "Per-server authentication configuration keyed by the server name as it appears in mcp.servers / mcp.json. Only non-sensitive values are stored here. Sensitive credentials (client_secret, password, API keys) are always stored in SecretStorage and NEVER written to this file.\n\nExample:\n{\n  \"prod-api\": {\n    \"method\": \"device\",\n    \"clientId\": \"abc123\",\n    \"deviceAuthEndpoint\": \"https://idp.example.com/oauth2/device_authz\",\n    \"tokenEndpoint\": \"https://idp.example.com/oauth2/token\",\n    \"scopes\": \"openid profile email\"\n  },\n  \"internal-service\": {\n    \"method\": \"client_credentials\",\n    \"clientId\": \"svc-account\",\n    \"tokenEndpoint\": \"https://auth.internal/token\"\n  },\n  \"legacy-app\": {\n    \"method\": \"password\",\n    \"clientId\": \"legacy-client\",\n    \"tokenEndpoint\": \"https://auth.legacy.com/token\",\n    \"username\": \"svc-user\"\n  },\n  \"simple-service\": {\n    \"method\": \"basic\",\n    \"username\": \"admin\"\n  },\n  \"public-data\": {\n    \"method\": \"api_key\",\n    \"apiKeyHeader\": \"x-api-key\"\n  }\n}",
+          "additionalProperties": {
             "type": "object",
-            "required": ["name", "url"],
             "properties": {
-              "name": {
+              "method": {
                 "type": "string",
-                "description": "Key under mcp.servers (e.g. my-mcp-server)"
+                "enum": ["device", "client_credentials", "password", "basic", "api_key"],
+                "description": "Authentication method for this server. If omitted, you will be prompted on first sign-in.\n• device — OAuth 2.0 Device Authorization Flow (browser login)\n• client_credentials — grant_type=client_credentials (client_id + client_secret)\n• password — grant_type=password (client_id + client_secret + username + password)\n• basic — HTTP Basic Authorization header\n• api_key — static key in a configurable header"
               },
-              "url": {
+              "clientId": {
                 "type": "string",
-                "description": "MCP server base URL"
+                "description": "OAuth client_id — used by device and client_credentials methods. Not sensitive."
+              },
+              "deviceAuthEndpoint": {
+                "type": "string",
+                "description": "Device Authorization Endpoint URL — used by device method only."
+              },
+              "tokenEndpoint": {
+                "type": "string",
+                "description": "Token Endpoint URL — used by device and client_credentials methods."
+              },
+              "scopes": {
+                "type": "string",
+                "description": "Space-separated OAuth scopes. Defaults to 'openid profile email' for device flow."
+              },
+              "username": {
+                "type": "string",
+                "description": "Username for Basic Auth. Not sensitive; password is always prompted and stored in SecretStorage."
+              },
+              "apiKeyHeader": {
+                "type": "string",
+                "description": "Header name to inject the API key into (e.g. 'x-api-key', 'Authorization'). Defaults to 'x-api-key'."
+              },
+              "allowInsecureTls": {
+                "type": "boolean",
+                "description": "Skip TLS certificate verification for this server's auth endpoints. Use only behind a corporate proxy with a self-signed certificate."
               }
-            }
+            },
+            "additionalProperties": false
           }
-        },
-        "mcpAuth.mcpServerName": {
-          "type": "string",
-          "default": "mcp-server",
-          "description": "Legacy: key name for this server under mcp.servers. Use mcpAuth.mcpServers for multiple servers."
-        },
-        "mcpAuth.mcpServerUrl": {
-          "type": "string",
-          "default": "",
-          "description": "Legacy: MCP server base URL. Use mcpAuth.mcpServers for multiple servers."
         },
         "mcpAuth.tokenRefreshBuffer": {
           "type": "number",
           "default": 60,
-          "description": "Seconds before token expiry to proactively refresh"
+          "description": "Seconds before token expiry to proactively refresh. Applies to device and client_credentials tokens."
         },
         "mcpAuth.allowInsecureTls": {
           "type": "boolean",
           "default": false,
-          "description": "Skip TLS certificate verification. Use only when a corporate proxy presents a self-signed certificate."
+          "description": "Global TLS verification bypass. Per-server allowInsecureTls in serverConfigs takes precedence."
         }
       }
     }
